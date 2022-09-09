@@ -1,6 +1,6 @@
-baseURL = ""
+baseURL = "https://blog.creepnt.stream"
 languageCode = "en-us"
-title = "Liste"
+title = "CreepNT's blog"
 disableKinds = ["section", "categories", "tags"]
 disqusShortname = ""
 pygmentsCodeFences = false
@@ -8,7 +8,7 @@ pygmentsUseClasses = false
 paginate = 9999
 minify = true
 disableHugoGeneratorInject = true
-
+enableEmoji = true
 
 [taxonomies]
   tag = "tags"
@@ -29,22 +29,21 @@ disableHugoGeneratorInject = true
     disable = true
 
 [Author]
-  name = "Liste"
+  name = "CreepNT"
 
 [params]
-  description = "Minimalistic Hugo blogging theme"
-  author = ""
-  copyright = ""
+  description = "A stash of thoughts, projects and journeys followed by a baguette enthusiast."
+  author = "CreepNT"
+  copyright = "Copyright © 2020-20XX CreepNT"
   logo = ""
 
 [frontmatter]
   date  = [":filename", ":default"]
-  author = ""
-  github = ""
-  facebook = ""
-  og_image = ""
-  sitename = "Liste"
-  twitter = ""
+  author = "CreepNT"
+  github = "CreepNT"
+  sitename = "CreepNT"
+  twitter = "https://twitter.com/CreepNT4"
+  summary="A stash of thoughts, projects and journeys followed by a baguette enthusiast."
 
 [permalinks]
   posts = "/:year/:month/:day/:filename"

@@ -1,4 +1,4 @@
-<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+<rss version="2.0" xmlns:atom="https://www.w3.org/2005/Atom">
   <channel>
     <!-- Required channel elements -->
     <title>{{ .Site.Title }}</title>
@@ -6,17 +6,17 @@
     <link>{{ .Site.BaseURL }}</link>
     <!-- Optional channel elements -->
     <language>en</language>
-    <copyright>Copyright {{ now.Format "2006"}}, Ronalds Vilcins</copyright>
+    <copyright>© 2020-{{ now.Format "2006"}} CreepNT</copyright>
     <lastBuildDate>{{ .Date.Format "Mon, 02 Jan 2006 15:04:05 -0700" | safeHTML }}</lastBuildDate>
     <generator>Hugo - gohugo.io</generator>
-    <docs>http://cyber.harvard.edu/rss/rss.html</docs>
-    <atom:link href="https://ronaldsvilcins.com/atom.xml" rel="self" type="application/atom+xml"/>
+    <docs>https://cyber.harvard.edu/rss/rss.html</docs>
+    <atom:link href="https://blog.creepnt.stream/atom.xml" rel="self" type="application/atom+xml"/>
     {{ range where .Site.RegularPages "Section" "posts" }}
     <item>
       <title>{{ .Title }}</title>
       <link>{{ .Permalink }}</link>
       <description>{{ .Content | html }}</description>
-      <author>ronalds.vilcins@gmail.com (Ronalds Vilcins)</author>
+      <author>creepnt69@gmail.com (CreepNT)</author>
       <guid>{{ .Permalink }}</guid>
       <pubDate>{{ .Date.Format "Mon, 02 Jan 2006 15:04:05 -0700" | safeHTML }}</pubDate>
     </item>

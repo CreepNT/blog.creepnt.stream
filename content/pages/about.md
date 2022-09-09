@@ -2,22 +2,30 @@
 title: About
 ---
 
-# Listed
+# blog.creepnt.stream
 
-Listed is a minimalistic Hugo blogging theme.
+The adventures of a stupid french guy doing computer (or not!) stuff.
 
-### Features
+I'm intrested in both low- and high-level computer sciences things.
 
-- Minimalistic, clean and simple design
-- Responsive design
-- Inline CSS
-- Anchor headings
-- Tags
-- 404 page
-- Compressed CSS and HTML
-- 100/100 score on Lighthouse, Page Speed Insights & Webpagetest
-- Robots.txt
-- Atom & Json feeds
-- Sass
-- Seo optimized (Twitter cards, Facebook Open Graph, Schema.org)
-- Ultra fast
+Stuff I do:
+
+ * Reverse engineering
+   * PSVita™ OS modules (Mostly ARMv7, more exotic stuff occasionally)
+   * Ratchet & Clank (MIPS/PowerPC/ARM)
+   * Random ARM/x86 binaries
+ * Development
+   * [Serveral](https://github.com/CreepNT/ArbitraryRW) [Vita](https://github.com/CreepNT/VitaLoader) [things](https://github.com/CreepNT/Rivet)...
+   * ...[and](https://github.com/CreepNT/RacREpo) [Ratchet & Clank](https://github.com/CreepNT/MobyViewer) [things](https://github.com/CreepNT/RCHooker)
+
+
+Programming languages I know:
+
+ * Basic HTML/CSS/JS
+ * Markdown
+ * Python
+ * C/C++
+ * C#
+ * Java
+ * ARMv7 assembly
+ * Basic x86, MIPS, ARMv8 and PowerPC assembly

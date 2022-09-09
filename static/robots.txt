@@ -1,3 +1,3 @@
 User-agent: *
 Disallow:
-Sitemap: https://ronaldsvilcins.com/sitemap.xml
+Sitemap: https://blog.creepnt.stream/sitemap.xml
