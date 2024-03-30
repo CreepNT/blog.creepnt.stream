@@ -2,7 +2,7 @@
 author = "CreepNT"
 title = "A look at the R&C 2 Wupash skip..."
 date = "2022-09-20"
-description = "A case of unforeseen consequences."
+description = "Racers-abused race condition"
 +++
 
 # Introduction
@@ -13,42 +13,70 @@ On September 19, 2022, community member VollZX found a way to skip a level in Ra
 The bug was explained to me as the following: by pressing Down and Triange at "the right time", [Voll's ship took off towards Maktar from Oozla instead of going towards the Nebula](https://clips.twitch.tv/HyperDistinctLouseArgieB8-ydhBWkGAEdpGcmmS). On first glance, I proposed a (wrong) hypothesis as to what may be happening, but decided to look into it more closely out of curiosity. This blogpost will walk you through how I found the root cause of this quite exotic bug.
 
 ### Setup
-For reverse engineering, my tool of choice is the open-source [Ghidra](https://ghidra-sre.org/) suite. It's a pretty powerful alternative to IDA, and while it's not as good on certain points, it also has some pretty major advantages (e.g. not costing a fuckton of money, having a working [Vita ELF loader](https://github.com/CreepNT/VitaLoader), ...).
+For reverse engineering, my tool of choice is the open-source [Ghidra](https://ghidra-sre.org/) suite. It's a pretty powerful alternative to IDA, and while it's not as good on certain points, it also has some pretty major advantages (e.g. not costing an arm and a leg, having a working [Vita ELF loader](https://github.com/CreepNT/VitaLoaderRedux), etc).
 
-For live debugging, I would usually have used [RCHooker](https://github.com/CreepNT/RCHooker) with well-placed hooks and `printf`s everwhere. However, it's a frankly terrible setup that brings not much more than just pain. It just so happens that I recently came into possession of a Vita devkit and figured out how to allow the debugger to attach to *any* process (even `SceShell` 😊), so I decided I would use that instead. Besides a few quirks, it worked flawlessly and was a much better solution than RCHooker.
+For live debugging, I used to use [RCHooker](https://github.com/CreepNT/RCHooker) with well-placed hooks and `printf`s everwhere, but it's a quite bad setup that makes work extremly painful. It just so happens that I recently came into possession of a Vita devkit and figured out how to allow the debugger to attach to *any* process (even `SceShell` 😊), so I used that instead. Besides a few quirks, it worked flawlessly and was a much better experience than using RCHooker.
 
 # The Bug
 ## First clues
-From previous reversing, I had found a function (that I called `go_to_level`) in R&C3 that looked like a good culprit. I managed to find its counterpart in R&C2 thanks to some debugging strings, placed a breakpoint and performed a regular takeoff; and indeed it got called. The caller, `FUN_81A3B046()`, was more intresting because it had two code pathes: if `levelId` (its first and only argument) was different from `CURRENT_LEVEL_ID` (a global variable), it would perform a call to `go_to_level`; if they were equal, something else was performed. 
+From previous reversing, I had found a function (`go_to_level`) in R&C3 that looked like a good culprit. I managed to find its counterpart in R&C2 - thanks to some debugging strings - and confirmed it was indeed involved by placing a breakpoint on it and performing a regular takeoff - it indeed got called. I walked up the stack to the caller, `FUN_81A3B046()`, which accepts a single argument (`new_level_id`) and does the following:
 
-I decided to moved my breakpoint to this function (with a `r0 != 1` condition, a.k.a. `levelId != LEVEL_OOZLA` since all takeoffs would be performed from Oozla) and try out the trick. Lo' and behold, after a few attempts, the debugger pauses and resuming flies me to Maktar. Just what we expected.
+ * if `new_level_id == CURRENT_LEVEL_ID`, some uninteresting code path is invoked
+   * Note that `CURRENT_LEVEL_ID` here is a *global variable* that stores... the ID of the current level (duh!)
+ * otherwise, it calls `go_to_level`
+
+I decided to move my breakpoint to this function - adding a `new_level_id != LEVEL_OOZLA` condition to reduce unnecessary breaking, since all takeoffs would be performed from Oozla - and tried out the trick. After a few attempts, the debugger pauses in the function, invoked with `new_level_id` equal to `LEVEL_MAKTAR_ARENA`. Resuming execution flies me to Maktar Arena, as expected.
 
 ## Going up the stack
-Thanks to the debugger (🙏), I also had call stacks so walking up the caller chain was **much better** than with RCHooker (where you can only dump `lr` and walk up one function at a time). The only caller Ghidra found was the one I had in my call stack, which is cool because it meant it must be a direct call (Ghidra usually fails to establish caller-callee relationships when indirect calls are perfomed). I had named this function `mode_doChange`, a name borrowed from the symboled Deadlocked build that was (re)discovered a few months back, so I understood it must have been implicated in the game mode mechanism. 
+Thanks to the debugger again (🙏), I had full call stacks (**much better** than RCHooker, where you can only walk up one function) so I could easily go up the call chain. The caller was also the only one Ghidra found, which is cool because it meant the call must be a direct (Ghidra usually fails to establish caller-callee relationships when indirect calls are perfomed). I had named this function `mode_doChange` - a name borrowed from the symboled Deadlocked build that was (re)discovered a few months back - which gave me a hint about this bug's involvment with the game mode system. 
 
 ### Game modes
-The game mode is an important part of the R&C engine. It consists of a few variables, the most important one being `gameMode` which holds the current game mode (duh!). Usually, changing game mode is performed by calling `mode_requestChange()` which sets `pendingGameMode` to the provided game mode, and some generic arguments (`rmc_arg0`/`rmc_arg1`). Later on, `mode_doChange` is called and performs actions based on the globals; first, it copies `gameMode` to `lastGameMode` (**last** stands for **previous** here), then it's mostly two `switch`es looking at `gameMode` and `pendingGameMode`. The code path we were hitting in this case is the following: `gameMode = GAME_MODE_PAUSE` (the ship menu), `pendingGameMode = GAME_MODE_SPACE` (takeoff / get-in / get-out animations) and `rmc_arg0 != 5 && rmg_arg0 != 6`. This leads to `rmc_arg1` being passed as the `levelId` for `FUN_81A3B046()`.
+The game mode system is made of several global variables that affect the game's execution flow, and functions to modify this global state:
+
+ * The `gameMode` global variable contains the current game mode
+ * The `pendingGameMode`, `rmc_arg0` and `rmc_arg1` global variables store information necessary for game mode change
+ * `mode_requestChange(new_mode, a0, a1)` can be called to change the current game mode
+  * It stores `new_mode` in `pendingGameMode`, `a0` in `rmc_arg0` and `a1` in `rmc_arg1`
+  * *It may also save the current game mode in `modeStack`, to allow restoring it later on*
+ * `mode_doChange()` is called in the main game loop (I guess?) and performs the transition
+  * First, it backs up `gameMode` in the `lastGameMode` global variable (**last** stands for **previous** here)
+  * Then, it finds a function to execute based on the values in `gameMode`, `pendingGameMode`
+  * In some cases, `rmc_arg0` is also examined to find the function
+
+In our case, the following request caused `go_to_level` to be invoked:
+
+ * `gameMode` is `GAME_MODE_PAUSE` (we're in the ship's menu)
+ * `pendingGameMode` is `GAME_MODE_SPACE` (takeoff / get-in-ship / get-out-of-ship animations)
+ * `rmc_arg0` is neither 5 nor 6
+
+In this case, `FUN_81A3B046(rmc_arg1)` is invoked...
 
 ![Screenshot of the decompiled routine](/rac2_decomp_output.png)
 
-If you hooked `FUN_81A3B046()` and exited the ship "normally", you'd see that `levelId` was always identical to `CURRENT_LEVEL_ID` and thus nothing particaly would happen. But when performing the bug, we'd get `LEVEL_MAKTAR`. I conducted a few tests: replacing the `0x2` with a `0x1` (`MAKTAR` -> `OOZLA`) resulted in the ship not taking off, and replacing it with `0x15` (`LEVEL_INSOMNIAC_MUSEUM`) made me fly towards it instead of Maktar. This gave me a rough overview of the bug: **`rmc_arg1` is `0x2` but it should be `0x1`**. Again, thanks to the debugger, I knew that `mode_doChange` was called by `FUN_819CC878()`, but it's a big function with mostly irrelevant stuff and it didn't answer my question: ***who writes 2 to `rmc_arg1` and why?***.
+If you hooked `FUN_81A3B046()` and exited the ship "normally", you'd see that `new_level_id` (and thus `rmc_arg1`) was always identical to `CURRENT_LEVEL_ID` (i.e., `LEVEL_OOZLA`); as such, the "not switching level" code path was invoked and all is well. However, when doing the trick, `new_level_id` was **not** `LEVEL_OOZLA` but `LEVEL_MAKTAR_ARENA` instead! To be sure that this is what caused the ship to leave for Maktar, I replaced `new_level_id` with `LEVEL_INSOMNIAC_MUSEUM` and the ship did take off towards the Museum.
 
-## Why is it 2?
-The easiest solution to figure this out is to place a data change breakpoint on `rmc_arg1`. Because it's used a lot may be used by more than this, I added a condition `rmc_arg1 == 2` to reduce false positives, and performed the sequence again. The only function that touches it is `mode_pop`, which writes its second argument to `rmc_arg1`. I quickly glanced the call stack (`FUN_819CC878()` - main game loop -> `FUN_81A20E14()` - executed if current game mode is `GAME_MODE_PAUSE` -> `mode_pop`) and I noticed that a global (we'll call it `g_previewedLevelId`) was used for the second argument to `mode_pop`... You guessed it, another trail to follow. I set a breakpoint on that global and found that only one routine touches it  (`FUN_819CD7A6()`, which writes its first argument to `g_previewedLevelId`). 
+I now had a rough overview of the bug: in the usual case, when leaving the ship, `rmc_arg1` is equal to `CURRENT_LEVEL_ID`; by doing whatever we were doing, we caused something that made it no longer be equal, and thus affected the game's behaviour. Thus, the questions that remained was *why is `rmc_arg1` different when we do wacky stuff?!*
 
-This function is only called from three sites:
+## Why is it `rmc_arg1` wrong?
+The easiest solution to figure this out is to place a data change breakpoint on `rmc_arg1`. The variable is actually accessed a lot, so I added a `rmc_arg1 == LEVEL_MAKTAR_ARENA` condition to reduce false positives, then I perforemd the bug. The debugger stopped in `mode_pop`, which is a function used to restore a game mode previously stored on the `modeStack` (it pops the top of the `modeStack` to `pendingGameMode`). It accepts two arguments that are placed in `rmc_arg0` and `rmc_arg1`. Looking at the call stack (`main_game_loop` (`FUN_819CD7A6`) -> `game_mode_pause_handler` (`FUN_81A20E14()`) -> `mode_pop`), we can see that the second arguments - what will be stored in `rmc_arg1` - comes from a global variable. We will call this variable `g_previewedLevelId` for reasons that will become obvious later on.
 
- 1. When the ship menu appears, the call site is `0x81A1EE91`. This is part of a routine called when entering `GAME_MODE_PAUSE` and passes the current level ID to `FUN_819CD7A6()`, so it cannot be our culprit.
+I placed a breakpoint on that newly found global, and found it was only being modified by one routine, `ship_menu_set_previewed_planet` (`FUN_819CD7A6()`), which takes a level ID as an argument, writes it to `g_previewedLevelId` and reads the size of `rc2/psp2data/global/maps/maps{_mm}[%d].ps3` where `%d` is replaced by `g_previewedLevelId`.
+This function is only called from three places:
 
- 1. When exiting the ship menu, the call site is `0x81A23C05`. This is part of what I assume to be the routine holding the bulk of the menu's logic, and also passes the current level ID to `FUN_819CD7A6()`, so it cannot be our culprit as well.
+ 1. When the ship menu appears, the call site is `0x81A1EE91`. This is part of a routine called when entering `GAME_MODE_PAUSE` and passes `CURRENT_LEVEL_ID` to `ship_menu_set_previewed_planet`, so it cannot be what causes `rmc_arg1` to be wrong.
 
- 1. When pressing Up/Down (i.e. changing which planet I highlight), the call site is `0x81A23DDB`, a bit further in the same routine as above. **The value passed to `FUN_819CD7A6()` is obtained through pointer dereferences**. I didn't bother RE'ing that part because all that mattered is that **this was the only caller with an argument that could be different** so it **had** to be our culprit.
+ 1. When exiting the ship menu, the call site is `0x81A23C05`. This is part of what I assume to be the routine holding the bulk of the menu's logic, and also passes `CURRENT_LEVEL_ID` to `ship_menu_set_previewed_planet`, so it also cannot be what causes `rmc_arg1` to be wrong.
 
-I added logging breakpoint on each of the routines to see in which order they were called and used the menu normally (that is, entering the ship, moving up and down a few times, and exiting the ship with Triangle). This resulted in the functions being called in the order I was expecting: #1 once, #3 as many times as I changed highlighted planet and #2 once.
-I then performed the bug and noticed the pattern was not respected: **caller #3 (Up/Down press handler) was executed even though we were exiting the menu**. This seemed even weirder because if you looked up the call chain, all those calls ended up coming from `FUN_81A20E14()`, which I noted earlier runs only when the game mode is `GAME_MODE_PAUSE`!
+ 1. When pressing Up/Down (i.e. changing the selected planet in the menu), the call site is `0x81A23DDB`, a bit further in the menu logic's routine. **The value passed to `ship_menu_set_previewed_planet` is NOT static, but obtained through pointer dereferences**. I didn't bother reversing the whole thing because all that mattered is that **this was the only caller with an argument that could be different from `CURRENT_LEVEL_ID`**, so it **had** to be the one responsible for the unexpected behaviour.
 
-## Is this Space or Pause?
-By now I had a rough overview of the problem but this seemingly mismatching gamemode puzzled me a lot. I used logging breakpoints again to see when the game mode was changed and also added one to know when my Triangle press was detected. Both of these loggers also print the "rendered frames counter" as a timestamp.
+## "Are we in space, or simply paused?"
+Attempting to understand what was going on, I added a breakpoint that would print something whenver hit at each of the call sites, to see in which order they were called:
+
+ * When entering the ship menu, #1 was called
+ * #3 was called each time I changed the selected planet
+ * Exiting the ship menu caused #2 to be called
+
+I then performed the trick, and something weird occured: **the D-Pad Up/Down press handler (#3) was executed after the 'exiting menu' handler (#2) has been called!** Even weirder is that looking up the call chain, #3 is called by `game_mode_pause_handler` which, as can be guessed from its name, only runs when `gameMode == GAME_MODE_PAUSE`! By now I had a rough overview of the problem but this seemingly mismatching gamemode puzzled me a lot. I used logging breakpoints again to see when the game mode was changed and also added one to know when my Triangle press was detected (i.e., when *exiting menu* handler was called). Both of these loggers also print the "rendered frames counter" as a timestamp.
 
 The resulting log was... unexpected:
 ```
@@ -58,23 +86,20 @@ SWITCH TO GM 6   @ 419428
 
 *🤔 The game mode isn't changed directly?*
 
-Yes. It turns out that game mode changes can be delayed by a few frames. This isn't something you'd catch from the naked eye - could ***you*** notice something is off by a frame in a 60FPS game?
-
-However, this has very important implications. It means that *the `GAME_MODE_PAUSE` handler still runs after requesting to close the menu*, or in other words, that *we can change `g_previewedLevelId` after it is reset but before it is passed to a routine that can initiate the takeoff*. This type of bug is called a race condition because successful exploitation relies on winning a race (in our case, pressing a button at the right moment).
+Apparently, no, it isn't... I have not fully reversed everything involved though, so I don't understand exactly why. However, this has very important implications. It means that *the `GAME_MODE_PAUSE` handler still runs after requesting to close the menu*, or in other words, that *we can change `g_previewedLevelId` after it is reset but before it is passed to the routine using it to decide whether or not to initiate a takeoff*. This type of bug is called a *race condition* because successful exploitation relies on winning a race (in our case, pressing a button at the right moment).
 
 # The Aftermath
-For speedrunners, this bug is obviously a blessing, considering it's a quite important timesave that can be achieved relatively easily. Wupash can also be a harsh level to master and isn't very exciting, so I'm confident not many people will regret it no longer being visited.
+For speedrunners, this bug is obviously a blessing, considering it's a quite important timesave that can be achieved relatively easily. Wupash Nebula is also a harsh level to master, and it isn't super entertaining to watch or perform, so I'm confident not many people will regret it no longer being visited.
 
-As for the R&C codebase, I don't know if this bug was accidentally found and fixed, or if was removed merely due to changes in the codebase, but it is *no longer present in R&C3* (as far as I'm aware - don't rub this in my face if a magic skip trick is found in R&C3 some day 😢). As I noted in the introduction, Insomniac had similar "planet redirection" schemes in R&C3.
+As for the R&C codebase: as I noted in the introduction, Insomniac had similar "planet redirection" schemes in R&C3, so I thought that it might still work. I attempted to replicate the bug but nothing came out of it. This bug seemingly no longer exists; whether it was found and fixed, or is simply gone as a byproduct of architectural changes is unknown though. In R&C3, the planet redirection schemes are only used for two levels:
 
-They are only used for two levels:
  * `Starship Phoenix`
    * After completing Qwark's Hideout, Ratchet is called by Sasha because the Starship Phoenix is under attack. This `Starship Phoenix Rescue` level, with ID `6`, is separate from the regular `Starship Phoenix`, which has ID `3`. Since Ratchet can leave the "Save the Phoenix" mission, the game has to be able to redirect going to level `3` to level `6` under certain circumstances.
 
  * `Holostar Studios`
    * During the first visit to Holostar Studios, you play as Clank in the `Holostar Studio 43` level, with ID `23`, a separate level from the "normal" `Holostar Studios` level, which has ID `13`. Because the player initiates flying towards the level, however, there again needs to be some redirection scheme.
 
-In R&C3, this is all handled inside `go_to_level` by checking the requested planet ID and changing it if needed. Compared to R&C2, this is a much saner scheme: since this function always ends up called on a level change, this ensures that no matter where the request comes from, nothing can bypass the redirection. As a bonus, this is also not being vulnerable to the race condition.
+Both of these are handled inside `go_to_level` by checking the requested planet ID and changing it if needed. Compared to R&C2, this is a much saner scheme: since this function always ends up called on a level change, this ensures that no matter where the request comes from, nothing can bypass the redirection.
 
 The following pseudocode exposes how it works:
 ```c
@@ -97,10 +122,14 @@ I wanted to figure out how the Maktar->Wupash redirection was done in R&C2 nonet
 Here's a simplified and commented version of that code:
 ```c
 if (/* Cross is pressed */) {
-    if (g_previewedLevelId == 0 /* Aranos 1 - some failsafe? */ || BYTE_821C6F7D != 0 /* Wupash finished? */ || g_previewedLevelId != LEVEL_MAKTAR /* not going to Maktar - no redirection needed */) {
+    if (g_previewedLevelId == 0 /* Aranos 1 - some failsafe? */
+        || BYTE_821C6F7D != 0 /* Wupash finished? */
+        || g_previewedLevelId != LEVEL_MAKTAR /* not going to Maktar - no redirection needed */
+    ) {
         /* ... */
     } else {
-        //Overwrite rmc_arg1 with WUPASH_NEBULA to change the destination level
+        //Overwrite the game mode change request, with rmc_arg1 with WUPASH_NEBULA, to change the destination level
+        //BUG: rmc_arg1 is not guaranteed to still be WUPASH_NEBULA by the time it is used for takeoff!
         mode_requestChange(GAME_MODE_SPACE, RMC_SWITCH, 1, LEVEL_WUPASH_NEBULA, NULL);
     }
     /* ... */
